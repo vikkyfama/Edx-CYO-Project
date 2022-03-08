@@ -1,0 +1,389 @@
+---
+title: "Video Games Sales"
+author: "Victoria Famakinwa"
+date: "3/7/2022"
+output: pdf_document
+---
+
+## INTRODUCTION
+
+This is the second HarvardX PH125.9x Data Science: Capstone course Project I will be working on. The purpose of this project is to create an algorithm using the Video Games Sales dataset which was retrieved from Kaggle. This is to demonstrate the depth of my understanding by working on a "Choose Your Own" dataset. In this project The goal of this report is to try to predict the global sales of a title using the other variables. 
+
+For this project the Video Games Sales dataset was retrieved from Kaggle. I'm especially interested in the critic score and the user score to see if they have an impact on game sales.
+First, we load the packages we'll need for the rest of the analysis:
+
+
+```{r setup, include=FALSE}
+packages <- c("ggplot2", "tidyverse", "tidyr", "caret", "ranger", "randomForest")
+lapply(packages, function(x) {
+if (!require(x, character.only = TRUE)) {
+install.packages(x, dependenvies = TRUE)
+library(x, character.only = TRUE)
+}
+})
+```
+
+# IMPORTING DATA
+
+The dataset is in a CVS file, and it should be read into Rstudio as a variable as shown below:
+
+```{r, echo=FALSE}
+library(readr)
+Vgames_sales <- read_csv("Video_Games_Sales_as_at_22_Dec_2016.csv")
+View(Vgames_sales)
+```
+
+
+# DATA INSPECTION
+Here we inspected the data by checking if there are any NA values
+
+```{r, echo=FALSE}
+colSums(is.na(Vgames_sales))
+```
+
+There are far too many missing values, as we can see. This is due to the fact that the data set utilized is a hybrid of two separate sets, with many of the original observations lacking equivalent data from the second data set. We are not interested in games for which we do not have this data because our study is largely focused on the ratings received by each title. As a result, records with missing values are removed:
+
+```{r, echo=FALSE}
+Vg_sales <- Vgames_sales[complete.cases(Vgames_sales), ]
+colSums(is.na(Vg_sales))
+```
+
+Checked and seen that there are no more NA values. Next we look at the structure of the data set:
+
+```{r, echo=FALSE}
+str(Vg_sales)
+```
+
+The year of release appears to be non-numerical, despite the fact that it should be. Take a look at the following values for this variable:
+
+```{r, echo=FALSE}
+unique(Vg_sales$Year_of_Release)
+```
+
+When we checked for NA values, we found a string "N/A" that was overlooked. These, like all other NA values, must be removed:
+
+```{r, echo=FALSE}
+vg_sales <- Vg_sales[Vg_sales$Year_of_Release != "N/A", ]
+
+```
+
+"NA" values are no longer available. We can now convert the variable to an integer and save it as follows:
+
+```{r, echo=FALSE}
+vg_sales$Year_of_Release <- as.integer(vg_sales$Year_of_Release)
+```
+
+Looking to see if other string columns have the same problem. For publisher, developer etc and eliminating it from the column:
+
+```{r, echo=FALSE}
+sum(vg_sales$Publisher=="N/A")
+vg_sales <- vg_sales[vg_sales$Publisher != "N/A", ]
+sum(vg_sales$Developer == "N/A")
+sum(vg_sales$Rating == "N/A")
+```
+
+Everything appears to be in order. Let's take a look at the sales factors to see if there are any odd outliers:
+
+
+```{r, echo=FALSE}
+summary(vg_sales$NA_Sales)
+summary(vg_sales$EU_Sales)
+summary(vg_sales$JP_Sales)
+summary(vg_sales$Other_Sales)
+summary(vg_sales$Global_Sales)
+```
+
+Nothing seems out of the ordinary. Now for the ratings:
+
+```{r, echo=FALSE}
+summary(vg_sales$Critic_Score)
+summary(vg_sales$Critic_Count)
+summary(vg_sales$User_Count)
+summary(vg_sales$User_Score)
+```
+
+The user score is not numeric, as we can see. It must be converted and  scaled to match the criticScore variable
+
+```{r, echo=FALSE}
+vg_sales$User_Score <- as.numeric(vg_sales$User_Score)
+summary(vg_sales$User_Score)
+vg_sales$User_Score <- vg_sales$User_Score * 10
+```
+
+We need to analyze the Rating variable and ignore the ratings with insignificant number of ratings
+
+```{r, echo=FALSE}
+vg_sales %>% count(Rating)
+vg_sales <- vg_sales %>% mutate(Rating = ifelse(Rating == "AO", "M", Rating))
+vg_sales <- vg_sales %>% mutate(Rating = ifelse(Rating == "K-A", "E", Rating))
+vg_sales <- vg_sales %>% mutate(Rating = ifelse(Rating == "RP", "E", Rating))
+vg_sales %>% count(Rating)
+```
+
+
+## DATA VISUALIZATION
+
+In this part, we create graphs to assist us understand the data. We begin by examining global sales, which is our dependent variable:
+
+
+```{r, echo=TRUE}
+ggplot(vg_sales) + geom_histogram(aes(Global_Sales), fill = "blue", binwidth = 0.5)
+```
+
+The variable is considerably skewed. As a result, it makes sense to log the scale axis:
+
+```{r, echo=TRUE}
+ggplot(vg_sales) + geom_histogram(aes(Global_Sales), fill = "blue", binwidth = 0.5) +
+scale_x_log10()
+```
+Based on this, it would be best to take the log of the variable later when we fit the models.
+
+
+#Exploring the Number of Titles released in each year (Year_of_Release  variable)
+```{r, echo=TRUE}
+vg_sales %>% group_by(Year_of_Release) %>%
+count() %>% ggplot() +
+geom_bar(aes(Year_of_Release, n), stat = "identity",
+fill = "blue") + theme(axis.text.x = element_text(angle = 90))
+```
+
+There is a distinct apex, as we can see. Let's take a look at the year's sales and compare them to the year's release numbers:
+
+```{r, echo=TRUE}
+#comparing sales in each year and the release numbers each year#
+color <- c("Titles released" = "red", "Global sales" = "blue")
+vg_sales %>% group_by(Year_of_Release) %>%
+summarise(sales = sum(Global_Sales), count = n()) %>%
+ggplot() + geom_line(aes(Year_of_Release, count, group = 1, color = "Titles released")) +
+geom_line(aes(Year_of_Release, sales, group = 1, color = "Global sales")) +
+xlab("Year of Release") + ylab("Titles released") +
+theme(axis.text.x = element_text(angle = 90), legend.position = "bottom") +
+scale_color_manual(values = color) + labs(color = "")
+```
+
+We can observe that the more the number of titles, the higher the revenue. The highest sales coincide to the peak in the year histograms, as can be seen. As a result, the majority of the data in the database dates from 2007 to 2009. Looking at the median and mean reveals this:
+
+```{r, echo=TRUE}
+summary(vg_sales$Year_of_Release)
+```
+
+Now let's look at how sales have changed in different geographical regions:
+
+```{r, echo=TRUE}
+vg_sales %>% gather(area, sales, NA_Sales:Other_Sales,
+factor_key = TRUE) %>%
+group_by(area, Year_of_Release) %>%
+summarise(sales = sum(sales)) %>%
+ggplot() +
+geom_line(aes(Year_of_Release, sales, group = area, color = area)) +
+xlab("Year of release") + ylab("Sales") + labs(color = "") +
+theme(legend.text = element_text(size = 7),
+legend.position = "bottom",
+axis.text.x = element_text(angle = 90))
+```
+
+North America is highest, followed by Europe.
+Let's take a peek at each platform's sales:
+
+```{r, echo=TRUE}
+#Assessing sales per platform#
+vg_sales %>% group_by(Platform) %>%
+summarise(sales = sum(Global_Sales)) %>% ggplot() +
+geom_bar(aes(reorder(Platform, sales), sales), stat = "identity",
+fill = "blue") +
+xlab("Platform") + ylab("Global sales") +
+coord_flip()
+```
+
+There are far too many platforms available. Create a new platform variable that categorizes these values into four groups: Nintendo, PlayStation, Xbox, PC, and Sega:
+
+```{r, echo=FALSE}
+vg_sales <- vg_sales %>% mutate(platform2 = case_when(
+Platform %in% c("Wii", "DS", "3DS", "WiiU", "GC", "GBA") ~ "Nintendo",
+Platform %in% c("X360", "XB", "XOne") ~ "XBox",
+Platform %in% c("PS3", "PS4", "PS2", "PS", "PSP", "PSV") ~ "PS",
+Platform == "PC" ~ "PC",
+Platform == "DC" ~ "Sega"
+))
+```
+
+Now plot the global sales each year for each:
+
+```{r, echo=TRUE}
+vg_sales %>% group_by(platform2, Year_of_Release) %>%
+summarise(sales = sum(Global_Sales)) %>%
+ggplot() +
+geom_line(aes(Year_of_Release, sales, group = platform2, color = platform2)) +
+xlab("Year of release") + ylab("Global Sales") + labs(color = "") +
+theme(legend.text = element_text(size = 7),
+axis.text.x = element_text(angle = 90, hjust = 1,
+vjust = 0.5, size = 6))
+```
+
+We now look at the sales for each gaming genre:
+
+```{r, echo=TRUE}
+vg_sales %>% group_by(Genre) %>%
+summarise(sales = sum(Global_Sales)) %>%
+ggplot() +
+geom_bar(aes(reorder(Genre, sales), sales), stat = "identity",
+fill = "blue") +
+ylab("Global Sales") + xlab("Genre") +
+theme(axis.text.x = element_text(angle = 90,
+hjust = 1, vjust = 0.5)) +
+coord_flip()
+```
+
+There are major variances, as we can see. Let's take a look at each developer's sales:
+
+
+```{r, echo=TRUE}
+vg_sales %>% group_by(Developer) %>%
+summarise(sales = sum(Global_Sales)) %>%
+arrange(desc(sales)) %>% slice(1:10) %>%
+ggplot() +
+geom_bar(aes(reorder(Developer, sales), sales), stat = "identity", fill = "blue") +
+theme(axis.text.x = element_text(angle = 90)) +
+xlab("Developer") + ylab("Global sales")
+```
+
+Nintendo develops the highest grossing games.
+
+
+## MODELLING
+
+According to the results of the preceding exploratory investigation, there appears to be a link between sales and various characteristics. The number of sales varies significantly based on the developer, user and reviewer ratings, platform, and even release year. Variables for the developer and the publisher would be beneficial. These variables are categorical, yet they have a lot of different values. Because of their brand value, it makes reasonable that games made by top publishers and creators sell better. As a result, we compile a list of the best publishers and developers:
+
+```{r, echo=TRUE}
+publishers_top <- (vg_sales %>% group_by(Publisher) %>%
+summarise(sales = sum(Global_Sales)) %>% arrange(desc(sales)) %>%
+top_n(10) %>% distinct(Publisher))$Publisher
+developers_top <- (vg_sales %>% group_by(Developer) %>%
+summarise(sales = sum(Global_Sales)) %>% arrange(desc(sales)) %>%
+top_n(10) %>% distinct(Developer))$Developer
+```
+
+Now that we know who the top 10 publishers and developers are, we can add additional variables to the data set to indicate whether the game was released by one of them or not:
+
+```{r, echo=TRUE}
+vg_sales <- vg_sales %>%
+mutate(publisher_top = ifelse(Publisher %in% publishers_top, TRUE, FALSE),
+developer_top = ifelse(Developer %in% developers_top, TRUE, FALSE))
+```
+
+The total number of platforms on which the game was released is another information that might be included. Some games are unique to a particular platform and are only available on that platform, while others are available on many platforms. It'd be fascinating to observe if exclusive titles sell better than non-exclusive games, or vice versa:
+
+```{r, echo=TRUE}
+vg_sales <- vg_sales %>% group_by(Name) %>% mutate(num_of_platforms = n()) %>% ungroup(Name)
+```
+
+We may begin training the algorithm now that we have the variables that we are interested in. To begin, we must first prepare the training and testing data sets:
+
+```{r, echo=TRUE}
+set.seed(1982, sample.kind = "Rounding")
+test_index <- createDataPartition(vg_sales$Global_Sales, p = 0.9, list = FALSE)
+train_set <- vg_sales[-test_index, ]
+test_set <- vg_sales[test_index, ]
+```
+
+We need to make sure that all possible values of the categorical variables are included in the training set.
+
+```{r, echo=TRUE}
+totalData <- rbind(train_set, test_set)
+for (f in 1:length(names(totalData))) {
+levels(train_set[, f]) <- levels(totalData[, f])
+}
+```
+
+## METRICS
+
+We then define an RMSE function as follows: 
+RMSE measures the difference between actual observations and predictions
+
+```{r, echo=TRUE}
+RMSE <- function(true_ratings, predicted_ratings){
+sqrt(mean((true_ratings - predicted_ratings)^2))
+}
+```
+
+## Linear Regression Model
+
+```{r, echo=TRUE}
+model_lm <- train(log(Global_Sales) ~ Critic_Score +
+User_Score + Genre +
+Year_of_Release + Platform + Critic_Count +
+User_Count + Rating +
+publisher_top + developer_top +
+num_of_platforms, method = "lm", data = train_set)
+```
+
+We compute the RMSE using the expected values:
+
+```{r, echo=TRUE}
+test_set$predicted_lm <- predict(model_lm, test_set)
+rmse_results <- data.frame(Method = "Linear regression",
+RMSE = RMSE(log(test_set$Global_Sales), test_set$predicted_lm))
+```
+
+
+## SVM Linear Model
+
+```{r, echo=TRUE}
+model_svm <- train(log(Global_Sales) ~ Critic_Score +
+User_Score + Genre +
+Year_of_Release + Platform + Critic_Count +
+User_Count + Rating +
+publisher_top + developer_top +
+num_of_platforms, method = "svmLinear",
+data = train_set)
+```
+
+We calculate the predicted values and compute the RMSE:
+
+```{r, echo=TRUE}
+test_set$predicted_svm <- predict(model_svm, test_set)
+rmse_results <- rmse_results %>%
+add_row(Method = "SVM Linear",
+RMSE = RMSE(log(test_set$Global_Sales),
+test_set$predicted_svm))
+```
+
+## Random Forest
+
+Now we'll use cross validation to run a random forest model:
+
+```{r, echo=TRUE}
+cntrl <- trainControl(method = "repeatedcv", number = 10,
+repeats = 3)
+tunegrid <- expand.grid(.mtry=c(1:5),
+.min.node.size = seq(1, 5, 1),
+.splitrule = c("extratrees", "variance"))
+model_rf <- train(log(Global_Sales) ~ Critic_Score +
+User_Score + Genre +
+Year_of_Release + Platform + Critic_Count +
+User_Count + Rating +
+publisher_top + developer_top +
+num_of_platforms, data = train_set,
+method = "ranger", trControl = cntrl,
+tuneGrid = tunegrid)
+```
+
+We calculate the predicted values and compute the RMSE:
+
+```{r, echo=FALSE}
+test_set$predicted_rf <- predict(model_rf, test_set)
+rmse_results <- rmse_results %>% add_row(Method = "Random forest", RMSE = RMSE(log(test_set$Global_Sales), test_set$predicted_rf))
+```
+
+## Comparing Models
+
+We can now compare the RMSE values of each model:
+
+```{r, echo=FALSE}
+rmse_results
+```
+
+## CONCLUSION
+
+  The video game sales data set was examined in this paper. In terms of platform, developer, game rating, and score, the exploratory study indicated differences in sales. The reviewer score has a stronger association with sales than the user score, according to this study. Having a good critic score appears to be far more significant than having a high user score. The research also indicated that some genres are more popular than others, with the action genre standing out. Nintendo and PlayStation were among the highest-grossing consoles. Nintendo was not just a successful gaming platform, but it was also discovered to be a popular developer, with Nintendo-developed titles earning far higher than other games. According to the machine learning methods utilized, the random forest outperformed linear regression and SVM. To get at the best result, cross validation was used.
+  However, the model is not ideal. It was clear that the errors in some cases were not small, and that there was a pattern to these errors. In particular, it was found that the errors are largest for larger values of global sales. This means that future work needs to be done on the model in order to make it perform better for larger values of global sales.
